@@ -1,0 +1,83 @@
+### Setup
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(jsonlite)
+library(glue)
+library(dplyr)
+```
+
+
+
+------------------------------------------------------------------------
+
+```{r}
+# Define a function to retrieve articles from the New York Times API
+get_nyt_articles <- function(year, month, day, api_key) {
+  # Validate input types
+  if (!is.numeric(year) || !is.numeric(month) || !is.numeric(day)) {
+    stop("Year, month, and day must be numeric types.")
+  }
+  
+  if (!is.character(api_key)) {
+    stop("API key must be a character string.")
+  }
+  
+  # Validate input ranges for month and day
+  if (month < 1 || month > 12) {
+    stop("Month must be between 1 and 12.")
+  }
+  
+  if (day < 1 || day > 31) {
+    stop("Day must be between 1 and 31.")
+  }
+  
+  # Ensure inputs are single values
+  if (length(year) != 1 || length(month) != 1 || length(day) != 1 || length(api_key) != 1) {
+    stop("Year, month, day, and API key must each be a single value or string, respectively.")
+  }
+
+  # Format the date for the API request
+  formatted_date <- sprintf("%04d%02d%02d", year, month, day)
+  # Build the base URL for the API request
+  base_url <- glue("https://api.nytimes.com/svc/search/v2/articlesearch.json?api-key={api_key}&begin_date={formatted_date}&end_date={formatted_date}&fq=document_type:(%22article%22)%20AND%20print_page:1%20AND%20print_section:(%22A%22)")
+
+  # Initialize result dataframe and page counter
+  result <- data.frame()
+  # Fetch data from the API using the base URL
+  input <- read_json(base_url)
+  # Get the number of hits from the API metadata
+  hits <- input$response$meta$hits
+
+  # Check if there are no hits and return an empty data frame with NA values
+  if (hits == 0) {
+    return(data.frame(headline=NA, byline=NA, web_url=NA, lead_paragraph=NA, source=NA))
+  }
+
+  # Page counter starts at 0 because API page indexing starts from 0
+  page <- 0
+  repeat {
+    # Create URL for the current page
+    url <- paste0(base_url, "&page=", page)
+    # Increment page counter
+    page <- page + 1
+    # Fetch data from the API for the current page
+    input <- read_json(url)
+    # Flatten the nested 'docs' structure and select relevant columns
+    result_new <- tibble::tibble(docs = input$response$docs) %>%
+      unnest_wider(docs) %>%
+      select(headline, byline, web_url, lead_paragraph, source, multimedia)
+    # Append the new results to the existing result dataframe
+    result <- rbind(result, result_new)
+    # Check if the last page has been reached based on hits and exit loop if so
+    if (hits <= page*10) {
+      return(result)
+    }
+    # Sleep to respect API rate limits
+    Sys.sleep(6)
+  }
+}
+
+```
+
+
